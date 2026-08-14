@@ -416,7 +416,14 @@ server.registerTool(
 
 // Jira is optional. Registering a tool that cannot possibly authenticate is worse
 // than not having one: the model sees it, calls it, and gets a 401 mid-task.
-const JIRA_URL = process.env.JIRA_BASE_URL?.replace(/\/+$/, '');
+// Tolerate a bare host: "acme.atlassian.net" is what people copy out of the
+// browser, and without a scheme every request silently redirects instead.
+const JIRA_URL = process.env.JIRA_BASE_URL
+  ? (/^https?:\/\//i.test(process.env.JIRA_BASE_URL)
+      ? process.env.JIRA_BASE_URL
+      : `https://${process.env.JIRA_BASE_URL}`
+    ).replace(/\/+$/, '')
+  : undefined;
 const JIRA_TOKEN = process.env.JIRA_API_TOKEN;
 
 // Atlassian has two kinds of API token and they need different hosts. A classic
@@ -439,20 +446,31 @@ async function resolveCloudId(): Promise<string | null> {
   return id;
 }
 
-async function jira(path: string): Promise<Response> {
-  const headers = {
+function jiraHeaders() {
+  return {
     Authorization: 'Basic ' + Buffer.from(`${EMAIL}:${JIRA_TOKEN}`).toString('base64'),
     Accept: 'application/json',
   };
+}
 
-  if (JIRA_URL!.includes('api.atlassian.com')) return fetch(`${JIRA_URL}${path}`, { headers });
+// Decide the host once, by asking who we are, rather than inferring it from the
+// status of each call. Jira answers 404 rather than 401 for an issue it will not
+// show you, so a per-request "retry on 401" rule silently never fires.
+let jiraBase: string | undefined;
 
-  const direct = await fetch(`${JIRA_URL}${path}`, { headers });
-  if (direct.status !== 401 && direct.status !== 403) return direct;
+async function jiraHost(): Promise<string> {
+  if (jiraBase) return jiraBase;
+  if (JIRA_URL!.includes('api.atlassian.com')) return (jiraBase = JIRA_URL!);
+
+  const probe = await fetch(`${JIRA_URL}/rest/api/2/myself`, { headers: jiraHeaders() });
+  if (probe.ok) return (jiraBase = JIRA_URL!);
 
   const id = await resolveCloudId();
-  if (!id) return direct;
-  return fetch(`https://api.atlassian.com/ex/jira/${id}${path}`, { headers });
+  return (jiraBase = id ? `https://api.atlassian.com/ex/jira/${id}` : JIRA_URL!);
+}
+
+async function jira(path: string): Promise<Response> {
+  return fetch(`${await jiraHost()}${path}`, { headers: jiraHeaders() });
 }
 
 if (JIRA_URL && JIRA_TOKEN) {
