@@ -419,6 +419,42 @@ server.registerTool(
 const JIRA_URL = process.env.JIRA_BASE_URL?.replace(/\/+$/, '');
 const JIRA_TOKEN = process.env.JIRA_API_TOKEN;
 
+// Atlassian has two kinds of API token and they need different hosts. A classic
+// token authenticates against the site itself. A scoped one does not: it answers
+// 401 there and must go through the gateway, which is addressed by cloud id
+// rather than by site name. Rather than make the user find that id, try the site
+// first and fall back to the gateway, resolving the id from a public endpoint.
+let cloudId: string | null | undefined;
+
+async function resolveCloudId(): Promise<string | null> {
+  if (cloudId !== undefined) return cloudId;
+  let id: string | null = null;
+  try {
+    const res = await fetch(`${JIRA_URL}/_edge/tenant_info`);
+    if (res.ok) id = ((await res.json()) as any).cloudId ?? null;
+  } catch {
+    id = null;
+  }
+  cloudId = id;
+  return id;
+}
+
+async function jira(path: string): Promise<Response> {
+  const headers = {
+    Authorization: 'Basic ' + Buffer.from(`${EMAIL}:${JIRA_TOKEN}`).toString('base64'),
+    Accept: 'application/json',
+  };
+
+  if (JIRA_URL!.includes('api.atlassian.com')) return fetch(`${JIRA_URL}${path}`, { headers });
+
+  const direct = await fetch(`${JIRA_URL}${path}`, { headers });
+  if (direct.status !== 401 && direct.status !== 403) return direct;
+
+  const id = await resolveCloudId();
+  if (!id) return direct;
+  return fetch(`https://api.atlassian.com/ex/jira/${id}${path}`, { headers });
+}
+
 if (JIRA_URL && JIRA_TOKEN) {
   server.registerTool(
     'get_jira_issue',
@@ -443,19 +479,16 @@ if (JIRA_URL && JIRA_TOKEN) {
       // Atlassian Document Format, a JSON tree that would need flattening for no gain.
       const fields =
         'summary,description,status,resolution,issuetype,priority,labels,parent,subtasks,issuelinks,comment';
-      const url = `${JIRA_URL}/rest/api/2/issue/${encodeURIComponent(issue_key)}?fields=${fields}`;
-      const res = await fetch(url, {
-        headers: {
-          Authorization: 'Basic ' + Buffer.from(`${EMAIL}:${JIRA_TOKEN}`).toString('base64'),
-          Accept: 'application/json',
-        },
-      });
+      const path = `/rest/api/2/issue/${encodeURIComponent(issue_key)}?fields=${fields}`;
+      const res = await jira(path);
       if (!res.ok) {
         const raw = (await res.text()).trim().slice(0, 400);
         throw new Error(
           `Jira ${res.status} ${res.statusText} on ${issue_key}: ${raw || '(empty body)'}` +
             (res.status === 401 || res.status === 403
               ? '\n  - JIRA_API_TOKEN is a separate token from the Bitbucket one. A Bitbucket-scoped' +
+                '\n    token cannot read Jira. Needed: read:jira-work and read:jira-user, or the' +
+                '\n    granular equivalents read:issue:jira, read:comment:jira, read:user:jira.' +
                 '\n    token cannot read Jira. It needs a Jira scope such as read:jira-work.'
               : res.status === 404
                 ? '\n  - Either the key does not exist, or your account cannot see that project.'

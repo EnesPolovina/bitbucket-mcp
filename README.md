@@ -115,11 +115,21 @@ linked issues and its comments:
 
 ```bash
 export JIRA_BASE_URL="https://yourcompany.atlassian.net"
-export JIRA_API_TOKEN="..."     # separate token, scope read:jira-work
+export JIRA_API_TOKEN="..."
 ```
 
 It needs its own token. A Bitbucket-scoped token cannot read Jira; it answers
 401. `ATLASSIAN_EMAIL` is shared between the two.
+
+Scopes: `read:jira-work` and `read:jira-user`, or their granular equivalents
+`read:issue:jira`, `read:comment:jira`, `read:user:jira`. The user scope is what
+puts a name on each comment.
+
+Give it your ordinary site URL. Atlassian's two kinds of token want different
+hosts — a classic token authenticates against the site, a scoped one answers 401
+there and has to go through a gateway addressed by cloud id. The server tries the
+site, and on a 401 looks the cloud id up and retries, so either kind of token
+works without you finding that id.
 
 Leave them unset and the tool is never registered. A tool that is present but
 cannot authenticate is worse than an absent one, because the model finds it,
