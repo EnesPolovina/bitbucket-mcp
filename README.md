@@ -15,10 +15,29 @@ Authentication uses Atlassian API tokens, which replaced app passwords on
 
 ## Install
 
+Needs Node 20 or newer.
+
 ```bash
+git clone https://github.com/EnesPolovina/bitbucket-mcp
+cd bitbucket-mcp
 npm install
 npm run build
+cp .env.example .env     # then fill it in, see Credentials below
 ```
+
+`.env` is gitignored, so it does not travel with the clone. It is the one thing
+you set up per machine. The tokens themselves belong to your Atlassian account,
+not to a machine, so the same ones work everywhere.
+
+Check it before wiring it into a client:
+
+```bash
+./smoke.sh                 # lists open pull requests
+./smoke.sh 42              # and fetches the diff for one
+```
+
+The server reads `.env` only through `smoke.sh`. When a client launches it, the
+values come from that client's config instead, so put them in both places.
 
 ## Credentials
 
